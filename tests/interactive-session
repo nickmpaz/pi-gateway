@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+
+import os, code
+from dotenv import load_dotenv
+from pynet import Pynet
+
+load_dotenv()
+p = Pynet()
+p.set_connection('http://localhost')
+
+code.interact(local=locals())

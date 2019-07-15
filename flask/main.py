@@ -1,27 +1,5 @@
-# ============================================================================================================================================================= 
-#
-# METHOD & ENDPOINT                 DESCRIPTION                         FORM        MODULE
-#
-# GET   /                           test connection                     NA          test_connection()
-#        
-# POST  /purge                      clear entire db                     devices     purge()
-#    
-# GET   /devices                    get list of devices                 NA          list_devices()
-#
-# GET   /devices/{dev_id}           get device last data point          NA          device_status()
-# POST  /devices/{dev_id}           create a device                     config      create_device()
-#
-# GET   /devices/{dev_id}/config    get device config                   NA          get_config()
-# POST  /devices/{dev_id}/config    update device config                config      set_config
-#
-# GET   /devices/{dev_id}/data      get data for device                 NA          get_data()
-# POST  /devices/{dev_id}/data      create data point                   channels    set_data()
-#
-# ============================================================================================================================================================= 
-
 import os, time, mysql.connector
 from flask import Flask, Response, request, jsonify, abort, make_response
-
 app = Flask(__name__)
 
 OK = 200
@@ -36,27 +14,10 @@ MYSQL_PASS = os.environ['MYSQL_ROOT_PASSWORD']
 MYSQL_DB = os.environ['MYSQL_DATABASE']
 MYSQL_AUTH = 'mysql_native_password'
 
-CONNECTION_SUCCESSFUL = "[Pynet] - Connection Successful"
-SELECT_DEVICE = "SELECT * FROM devices WHERE device_id = %s"
-SELECT_DEVICES = "SELECT * FROM devices ORDER BY device_id"
-SELECT_DATA = "SELECT * FROM device_data WHERE device_id = %s ORDER BY time_stamp"
-INSERT_DEVICE = "INSERT INTO devices (device_id, frequency) VALUES (%s, %s)"
-INSERT_DATA = "INSERT INTO device_data \
-               (device_id, time_stamp, chan_0, chan_1, chan_2, chan_3) \
-               VALUES (%s, %s, %s, %s, %s, %s)" 
-DELETE_ALL_DEVICES = "DELETE FROM devices"
-DELETE_ALL_DATA = "DELETE FROM device_data"
-DELETE_DEVICE = "DELETE FROM devices WHERE device_id = %s"
-DELETE_DATA = "DELETE FROM device_data WHERE device_id = %s"
-UPDATE_CONFIG = "UPDATE devices SET frequency = %s WHERE device_id = %s"
-UPDATE_STATUS = "UPDATE devices SET \
-                 time_stamp = %s, chan_0 = %s, chan_1 = %s, chan_2 = %s, chan_3 = %s \
-                 WHERE device_id = %s"
-
-# ============================================================================================================================================================= 
-
 def db_connect():
+    
     try:
+
         db = mysql.connector.connect(
             host = MYSQL_HOST,
             user = MYSQL_USER,
@@ -66,229 +27,239 @@ def db_connect():
         )
         cursor = db.cursor(buffered=True)
         return cursor , db
+
+    except: abort(SERVER_ERROR)
+
+def in_database(cursor, db, device_id):
+
+    try:
+        cursor.execute((
+            "SELECT * "
+            "FROM devices " 
+            "WHERE device_id = %s" 
+        ) % str(device_id))
+
+    except: 
+        db.close()
+        abort(501)
+    
+    return False if cursor.rowcount < 1 else True
+
+def clear_database(cursor, db):
+
+    try:
+        cursor.execute("DELETE FROM devices")
+        cursor.execute("DELETE FROM device_data")
+        db.commit()
     except:
+        db.rollback()
+        db.close()
         abort(SERVER_ERROR)
 
-def in_database(device_id, cursor):
-    cursor.execute(SELECT_DEVICE % str(device_id))
-    if cursor.rowcount < 1: return False
-    return True
+def get_device_list(cursor, db):
+
+    try:
+        cursor.execute((
+            "SELECT * "
+            "FROM devices "
+            "ORDER BY device_id"
+        ))
+        
+        results = cursor.fetchall()
+        devices = []
+        for row in results: devices.append(row[0])
+
+    except:
+        db.close()
+        abort(SERVER_ERROR)
+
+    return devices
+
+def get_device(cursor, db, device_id):
+
+    try:
+        
+        cursor.execute((
+            "SELECT * "
+            "FROM devices "
+            "WHERE device_id = %s"
+        ) % str(device_id))
+
+        results = cursor.fetchall()
+        device_row = results[0]
+
+    except:
+        db.close
+        abort(SERVER_ERROR)
+
+    return device_row
+
+def create_device(cursor, db, device_id, frequency, config):
+
+    try:
+        cursor.execute((
+            "INSERT INTO devices (device_id, frequency, config) "
+            "VALUES (%s, %s, '%s')"
+        ) % (device_id, frequency, config))
+
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        db.close()
+        return str(e)
+        abort(SERVER_ERROR)
+
+def update_device(cursor, db, device_id, frequency, config):
+
+    try:
+
+        cursor.execute((
+            "UPDATE devices "
+            "SET frequency = %s, config = '%s' "
+            "WHERE device_id = %s"
+        ) % (str(frequency), str(config), str(device_id)))
+
+        db.commit()
+
+    except Exception as e:
+
+        db.rollback()
+        db.close()
+        return str(e)
+        abort(SERVER_ERROR)
+
+def get_data(cursor, db, device_id): 
+
+    try:
+        cursor.execute((
+            "SELECT * "
+            "FROM device_data "
+            "WHERE device_id = %s "
+            "ORDER BY time_stamp" 
+        ) % device_id)
+
+        results = cursor.fetchall()
+        data = []
+        for row in results: data.append(row)
+
+    except:
+        db.close
+        abort(SERVER_ERROR)
+
+    return data
+
+def create_data(cursor, db, device_id, ch0, ch1, ch2, ch3): 
+    try:
+        timestamp = int(time.time())
+
+        cursor.execute((
+            "INSERT INTO device_data "
+            "(device_id, time_stamp, chan_0, chan_1, chan_2, chan_3) "
+            "VALUES (%s, %s, %s, %s, %s, %s)"
+        ), (str(device_id), timestamp, ch0, ch1, ch2, ch3))
+
+        cursor.execute((
+            "UPDATE devices "
+            "SET time_stamp = %s, chan_0 = %s, chan_1 = %s, chan_2 = %s, chan_3 = %s "
+            "WHERE device_id = %s"
+        ), (timestamp, ch0, ch1, ch2, ch3, str(device_id)))
+
+        db.commit()
+
+    except:
+        db.rollback()
+        db.close()
+        abort(BAD_REQUEST)
 
 @app.route("/")
-def test_connection():
-    return make_response(CONNECTION_SUCCESSFUL, OK)
+def test_connection(): return make_response("[Pynet] - Connection Successful", OK)
 
-@app.route("/purge", methods=["POST"])
-def purge_database():
-    # clear database
-    if request.method == "POST":
-        if 'device' in request.form.keys():
-            cursor, db = db_connect()
-            try:
-                device = str(int(request.form['device']))
-                cursor.execute(DELETE_DEVICE % device)
-                db.commit()
-                cursor.execute(DELETE_DATA % device)
-                db.commit()
-                db.close()
-            except Exception as e:
-                db.rollback()
-                db.close()
-                return str(e)
-                #abort(SERVER_ERROR)
-
-            return make_response('',OK)
-        else:
-            cursor, db = db_connect()
-            try:
-                cursor.execute(DELETE_ALL_DEVICES)
-                db.commit()
-                cursor.execute(DELETE_ALL_DATA)
-                db.commit()
-                db.close()
-            except:
-                db.rollback()
-                db.close()
-                abort(SERVER_ERROR)
-
-            return make_response('',OK)
-
-@app.route("/devices", methods=["GET"])
-def index():
-    # return list of devcices
+@app.route("/devices", methods=["GET", "POST"])
+def devices():
+    
     if request.method == "GET":
-        cursor, db = db_connect()
-        try:
-            cursor.execute(SELECT_DEVICES)
-            results = cursor.fetchall()
-            return_message = {'response': []}
-            for row in results:
-                return_message['response'].append(row[0])
-            db.close()
-        except:
-            db.close()
-            abort(SERVER_ERROR)
 
+        cursor, db = db_connect()
+        devices = get_device_list(cursor, db)
+        return_message = {'response': devices}
+
+        db.close()
         return make_response(jsonify(return_message),OK)
 
-@app.route("/devices/<int:device_id>", methods=["GET", "POST"])
-def devices(device_id):
-    # return device status
-    if request.method == "GET":
-        cursor, db = db_connect()
-        # ensure device exists in database and handle values
-        try:
-            device_id = str(device_id)
-            if not in_database(device_id, cursor):
-                raise Exception
-        except:
-            abort(NOT_FOUND)
-
-        try:
-            cursor.execute(SELECT_DEVICE % device_id)
-            results = cursor.fetchall()
-            data_point = results[0][2:]
-            return_message = {'response': data_point}
-            db.close()
-
-        except:
-            db.close
-            abort(SERVER_ERROR)
-
-        return make_response(jsonify(return_message), OK)
-    # create a device
     elif request.method == "POST":
+
         cursor, db = db_connect()
-        # verify request and handle values
-        try:
-            device_id = str(device_id)
-            frequency = str(int(request.form['frequency']))
-            if in_database(device_id, cursor):
-                raise Exception
-        except:
-            abort(BAD_REQUEST)
-        # execute insertion
-        try:
-            val = (device_id, frequency)
-            cursor.execute(INSERT_DEVICE, val)
-            db.commit()
-            db.close()
-        except:
-            db.rollback()
-            db.close()
-            abort(SERVER_ERROR)
+        clear_database(cursor, db)
 
-        return make_response('',CREATED)
-
-
-@app.route("/devices/<int:device_id>/config", methods=["GET", "POST"])
-def config(device_id):
-    # return device config
-    if request.method == "GET":
-        cursor, db = db_connect()
-        # ensure device exists in database and handle values
-        try:
-            device_id = str(device_id)
-            if not in_database(device_id, cursor):
-                raise Exception
-        except:
-            abort(NOT_FOUND)
-
-        try:
-            cursor.execute(SELECT_DEVICE % device_id)
-            results = cursor.fetchall()
-            data_point = results[0][:2]
-            return_message = {'response': data_point}
-            db.close()
-
-        except:
-            db.close
-            abort(SERVER_ERROR)
-
-        return make_response(jsonify(return_message), OK)
-    # set device config
-    elif request.method == "POST":
-        cursor, db = db_connect()
-        try:
-            device_id = str(device_id)
-            frequency = str(int(request.form['frequency']))
-            if not in_database(device_id, cursor):
-                raise Exception
-        except:
-            abort(BAD_REQUEST)
-        try:
-            val = (frequency, device_id)
-            cursor.execute( UPDATE_CONFIG, val)
-            db.commit()
-            db.close()
-
-        except:
-            db.rollback()
-            db.close
-            abort(SERVER_ERROR)
-
+        db.close
         return make_response('',OK)
 
+@app.route("/devices/<int:device_id>", methods=["GET", "POST"])
+def devices_device(device_id):
+
+    if request.method == "GET":
+
+        cursor, db = db_connect()
+        if not in_database(cursor, db, device_id): abort(NOT_FOUND)
+        device_row = get_device(cursor, db, device_id)
+        return_message = {'response': device_row}
+
+        db.close
+        return make_response(jsonify(return_message), OK)
+
+    elif request.method == "POST":
+
+        cursor, db = db_connect()
+        default_frequency = 60
+        default_config = ""
+
+        if in_database(cursor, db, device_id): 
+
+            if 'frequency' not in request.args or 'config' not in request.args:
+                current_device = get_device(cursor, db, device_id)
+                default_frequency = current_device[1]
+                default_config = current_device[2] 
+            
+            frequency = request.args.get('frequency', default_frequency)
+            config = request.args.get('config', default_config)
+            update_device(cursor, db, device_id, frequency, config)
+
+        else:
+            frequency = request.args.get('frequency', default_frequency)
+            config = request.args.get('config', default_config)
+            create_device(cursor, db, device_id, frequency, config)
+
+        db.close()
+        return make_response('',CREATED)
 
 @app.route("/devices/<int:device_id>/data", methods=["GET", "POST"])
-def data(device_id):
-    # get all rows of data for device
+def devices_device_data(device_id):
+
     if request.method == "GET":
+
         cursor, db = db_connect()
-        # ensure device exists in database and handle values
-        try:
-            device_id = str(device_id)
-            if not in_database(device_id, cursor):
-                raise Exception
-        except:
-            abort(NOT_FOUND)
-
-        try:
-            cursor.execute(SELECT_DATA % device_id)
-            results = cursor.fetchall()
-            return_message = {'response': []}
-            for row in results:
-                return_message['response'].append(row)
-            db.close()
-
-        except:
-            db.close
-            abort(SERVER_ERROR)
-
+        if not in_database(cursor, db, device_id): abort(NOT_FOUND)
+        data = get_data(cursor, db, device_id)
+        return_message = {'response': data}
+        db.close()
         return make_response(jsonify(return_message), OK)
-    # insert a data row and update device status
-    elif request.method == "POST":
-        cursor, db = db_connect()
-        # ensure device exists in database and handle values
-        try:
-            device_id = str(device_id)
-            timestamp = str(int(time.time()))
-            if not in_database(device_id, cursor):
-                raise Exception
-        except:
-            abort(NOT_FOUND)
 
-        try: ch0 = str(float(request.form['ch0']))
+    elif request.method == "POST":
+
+        cursor, db = db_connect()
+        if not in_database(cursor, db, device_id): abort(NOT_FOUND)
+
+        try: ch0 = str(float(request.args['ch0']))
         except: ch0 = None
-        try: ch1 = str(float(request.form['ch1']))
+        try: ch1 = str(float(request.args['ch1']))
         except: ch1 = None
-        try: ch2 = str(float(request.form['ch2']))
+        try: ch2 = str(float(request.args['ch2']))
         except: ch2 = None
-        try: ch3 = str(float(request.form['ch3']))
+        try: ch3 = str(float(request.args['ch3']))
         except: ch3 = None
 
-        try:
-            val = (device_id, timestamp, ch0, ch1, ch2, ch3)
-            cursor.execute(INSERT_DATA, val)
-            db.commit()
-            val = (timestamp, ch0, ch1, ch2, ch3, device_id)
-            cursor.execute(UPDATE_STATUS, val)
-            db.commit()
-            db.close()
-        except:
-            db.rollback()
-            db.close()
-            abort(BAD_REQUEST)
-
+        create_data(cursor, db, device_id, ch0, ch1, ch2, ch3)
         return make_response('', CREATED)
+
 

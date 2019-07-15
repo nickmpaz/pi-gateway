@@ -4,6 +4,7 @@ USE pynet_db;
 CREATE TABLE IF NOT EXISTS devices (
     device_id INT NOT NULL,
     frequency INT NOT NULL,
+    config TEXT NOT NULL,
     time_stamp INT DEFAULT NULL,
     chan_0 FLOAT DEFAULT NULL,
     chan_1 FLOAT DEFAULT NULL,
